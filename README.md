@@ -1,1 +1,1 @@
-# ml-stocks-analysis
+# idx-stocks-analysis
