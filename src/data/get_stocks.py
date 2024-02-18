@@ -44,7 +44,7 @@ class GetIndexKontan:
 
 def get_stock_tickers():
     # Get all stock tickers from IDX
-    idx_tickers = yf.Tickers('JKSE').tickers
+    idx_tickers = yf.Tickers("^JKSE").tickers
 
     # Extract the ticker symbols
     stock_tickers = [ticker.ticker for ticker in idx_tickers]
@@ -53,7 +53,7 @@ def get_stock_tickers():
 
 def get_kompas100_tickers():
     # Get the components of Kompas 100 Index
-    kompas100 = yf.Tickers('^KOMPAS100').tickers[0]
+    kompas100 = yf.Tickers("^KOMPAS100").tickers[0]
 
     # Extract the ticker symbols
     stock_tickers = kompas100.symbols
@@ -62,7 +62,7 @@ def get_kompas100_tickers():
 
 def get_all_stock_prices(start_date, end_date):
     # Get all stock tickers from IDX
-    idx_tickers = yf.Tickers('JKSE').tickers
+    idx_tickers = yf.Tickers("^JKSE").tickers
 
     stock_prices = pd.DataFrame()
 
