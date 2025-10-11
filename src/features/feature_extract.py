@@ -4,15 +4,21 @@ import pandas as pd
 def log_rate(df):
     return np.log(df / df.shift(1)).dropna(how='all')
 
-def ewcorr(df, span=300):
+def daily_movt(open_price, close_price):
+    return log_rate(close_price/open_price).fillna(0)
+
+def risk_premium(stock_daily_return, daily_risk_free):
+    stock_daily_return - daily_risk_free
+
+def exp_weighted_corr(df, span=300):
     corr = df.ewm(span=span).corr()
     return corr.loc[corr.index.levels[0][-1]]
 
-def ewcov(df, span=300):
+def exp_weighted_cov(df, span=300):
     cov = df.ewm(span=span).cov()
     return cov.loc[cov.index.levels[0][-1]]
 
-def ewstd(df, span=300):
+def exp_weighted_std(df, span=300):
     std = df.ewm(span=span).std()
     return std.iloc[-1]
 
