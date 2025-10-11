@@ -165,4 +165,4 @@ cython_debug/
 
 #Project
 reports/
-.vscode/settings.json
+*config.env
