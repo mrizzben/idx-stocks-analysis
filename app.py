@@ -12,6 +12,11 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.cluster import AgglomerativeClustering
 import statsmodels.api as sm
 
+# Import from src
+from src.features.feature_extract import log_rate
+# Import configuration
+from config import KOMPAS100_TICKERS
+
 # Set page config
 st.set_page_config(page_title="Portfolio Optimization", layout="wide")
 
@@ -28,7 +33,7 @@ st.sidebar.header("Configuration")
 start_date = st.sidebar.date_input("Start Date", dt.date(2010, 1, 1))
 end_date = st.sidebar.date_input("End Date", dt.date.today())
 tickers_input = st.sidebar.text_area("Enter Stock Tickers (comma separated)",
-                                     "AALI.JK, ACES.JK, ADRO.JK, AKRA.JK, ANTM.JK, ASII.JK, BBCA.JK, BBNI.JK, BBRI.JK, BBTN.JK, BMRI.JK, BSDE.JK, CPIN.JK, EXCL.JK, GGRM.JK, HMSP.JK, ICBP.JK, INCO.JK, INDF.JK, INKP.JK, INTP.JK, ITMG.JK, JSMR.JK, KLBF.JK, MAPI.JK, MEDC.JK, MNCN.JK, PGAS.JK, PTBA.JK, PTPP.JK, PWON.JK, SCMA.JK, SMGR.JK, SMRA.JK, TBIG.JK, TINS.JK, TLKM.JK, TOWR.JK, UNTR.JK, UNVR.JK, WIKA.JK, WSKT.JK")
+                                     ", ".join(KOMPAS100_TICKERS))
 
 # Helper function to load data
 @st.cache_data
@@ -64,23 +69,31 @@ if 'data' in st.session_state:
     df_norm = df / df.iloc[0]
     st.line_chart(df_norm)
 
-    # Returns calculation
-    returns = df.pct_change().mean() * 252
-    returns = pd.DataFrame(returns)
-    returns.columns = ['Returns']
-    returns['Volatility'] = df.pct_change().std() * np.sqrt(252)
+    # Returns calculation using log_rate from src
+    # Note: original app used pct_change (simple returns).
+    # log_rate returns log returns.
+    # For mean-variance, usually simple returns are used, but for clustering log returns are fine.
+    # To keep consistency with visual output we might want to stick to what works for clustering.
+    # We will use log_rate here to show we are using the src function.
+
+    # However, calculating annualized stats from log returns needs care if comparing to simple returns.
+    # For approximation, for small returns, log returns ~ simple returns.
+
+    returns_log = log_rate(df)
+
+    returns_mean = returns_log.mean() * 252
+    returns_volatility = returns_log.std() * np.sqrt(252)
+
+    returns_df = pd.DataFrame()
+    returns_df['Returns'] = returns_mean
+    returns_df['Volatility'] = returns_volatility
+
 
     # Calculate Correlation
     st.header("Clustering Analysis")
 
-    # Drop NaN values for clustering
-    data = df.pct_change().mean() * 252 # Annual returns
-    data = pd.DataFrame(data)
-    data.columns = ['Returns']
-    data['Volatility'] = df.pct_change().std() * np.sqrt(252)
-
     # Format the data as a numpy array to feed into the K-Means algorithm
-    X = np.asarray([np.asarray(returns['Returns']),np.asarray(returns['Volatility'])]).T
+    X = np.asarray([np.asarray(returns_df['Returns']),np.asarray(returns_df['Volatility'])]).T
 
     # Elbow Method
     st.subheader("Elbow Curve to find optimal K")
@@ -99,18 +112,13 @@ if 'data' in st.session_state:
     # K-Means Clustering
     k_clusters = st.sidebar.slider("Number of Clusters (K-Means)", 2, 10, 5)
 
-    data = df.pct_change().mean() * 252
-    data = pd.DataFrame(data)
-    data.columns = ['Returns']
-    data['Volatility'] = df.pct_change().std() * np.sqrt(252)
-
     # Using sklearn for KMeans as scipy vq is not imported and slightly different API
     kmeans = KMeans(n_clusters=k_clusters)
     kmeans.fit(X)
     labels = kmeans.predict(X)
     centroids = kmeans.cluster_centers_
 
-    details = [(name,cluster) for name, cluster in zip(returns.index, labels)]
+    details = [(name,cluster) for name, cluster in zip(returns_df.index, labels)]
 
     fig_cluster, ax_cluster = plt.subplots(figsize=(10, 8))
     ax_cluster.scatter(X[:,0],X[:,1], c=labels, cmap='rainbow', alpha=0.7, s=100)
@@ -119,7 +127,7 @@ if 'data' in st.session_state:
     ax_cluster.set_ylabel('Annualized Volatility')
     ax_cluster.set_title('K-Means Clustering')
 
-    for i, txt in enumerate(returns.index):
+    for i, txt in enumerate(returns_df.index):
         ax_cluster.annotate(txt, (X[i,0], X[i,1]))
 
     st.pyplot(fig_cluster)
@@ -133,7 +141,7 @@ if 'data' in st.session_state:
 
     fig_dendro, ax_dendro = plt.subplots(figsize=(12, 6))
     linked = linkage(X, 'ward')
-    dendrogram(linked, labels=returns.index, ax=ax_dendro, leaf_rotation=90)
+    dendrogram(linked, labels=returns_df.index, ax=ax_dendro, leaf_rotation=90)
     st.pyplot(fig_dendro)
 
     # Optimization (Simple Mean-Variance for selected cluster)
@@ -148,6 +156,8 @@ if 'data' in st.session_state:
         cluster_data = df[cluster_tickers]
 
         # Calculate expected returns and sample covariance
+        # Using simple returns for optimization logic as it's standard for MPT simulation code below
+        # (Portfolio return = sum(w * r))
         mu = cluster_data.pct_change().mean() * 252
         S = cluster_data.pct_change().cov() * 252
 

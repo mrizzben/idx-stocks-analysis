@@ -128,3 +128,4 @@ widgetsnbextension==3.5.1
 wrapt==1.14.1
 yfinance==0.1.63
 zipp==3.5.0
+streamlit
