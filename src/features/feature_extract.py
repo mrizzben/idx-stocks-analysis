@@ -8,7 +8,7 @@ def daily_movt(open_price, close_price):
     return log_rate(close_price/open_price).fillna(0)
 
 def risk_premium(stock_daily_return, daily_risk_free):
-    stock_daily_return - daily_risk_free
+    return stock_daily_return - daily_risk_free
 
 def exp_weighted_corr(df, span=300):
     corr = df.ewm(span=span).corr()
