@@ -6,7 +6,7 @@ This module implements the Markowitz mean-variance optimization algorithm.
 import numpy as np
 import pandas as pd
 import cvxpy as cp
-from typing import Dict, Optional, Union, Any
+from typing import Dict, Optional, Union, Any, List
 from .base import BaseOptimizer, OptimizationResult
 
 class MarkowitzOptimizer(BaseOptimizer):

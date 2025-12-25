@@ -16,6 +16,9 @@ import statsmodels.api as sm
 from src.features.feature_extract import log_rate
 # Import configuration
 from config import KOMPAS100_TICKERS
+# Import from portfolio_optimizer
+from portfolio_optimizer.core.markowitz import MarkowitzOptimizer
+from portfolio_optimizer.core.hrp import HierarchicalRiskParityOptimizer
 
 # Set page config
 st.set_page_config(page_title="Portfolio Optimization", layout="wide")
@@ -155,39 +158,70 @@ if 'data' in st.session_state:
 
         cluster_data = df[cluster_tickers]
 
-        # Calculate expected returns and sample covariance
-        # Using simple returns for optimization logic as it's standard for MPT simulation code below
-        # (Portfolio return = sum(w * r))
-        mu = cluster_data.pct_change().mean() * 252
-        S = cluster_data.pct_change().cov() * 252
+        # Prepare data for optimization
+        # Note: portfolio_optimizer modules typically expect simple returns for calculating final stats
+        # but check documentation if log returns are preferred. Markowitz usually uses arithmetic mean/cov.
+        returns_simple = cluster_data.pct_change().dropna()
+        cov_matrix = returns_simple.cov() * 252
 
-        # Efficient Frontier Simulation
-        st.subheader("Efficient Frontier Simulation")
+        st.subheader("Mean-Variance Optimization")
 
-        num_portfolios = 5000
-        results = np.zeros((3, num_portfolios))
+        # Initialize Optimizer
+        optimizer = MarkowitzOptimizer(returns_simple, cov_matrix)
 
-        for i in range(num_portfolios):
-            weights = np.random.random(len(cluster_tickers))
-            weights /= np.sum(weights)
-
-            portfolio_return = np.sum(weights * mu)
-            portfolio_std_dev = np.sqrt(np.dot(weights.T, np.dot(S, weights)))
-
-            results[0,i] = portfolio_return
-            results[1,i] = portfolio_std_dev
-            results[2,i] = results[0,i] / results[1,i] # Sharpe Ratio
+        # Calculate Efficient Frontier
+        ef_points = optimizer._calculate_efficient_frontier(n_points=50)
 
         fig_ef, ax_ef = plt.subplots(figsize=(10, 6))
-        sc = ax_ef.scatter(results[1,:], results[0,:], c=results[2,:], cmap='YlGnBu', marker='o')
+        ax_ef.plot(ef_points['risk'], ef_points['returns'], 'b-', label='Efficient Frontier')
         ax_ef.set_xlabel('Volatility')
-        ax_ef.set_ylabel('Returns')
-        plt.colorbar(sc, label='Sharpe Ratio')
+        ax_ef.set_ylabel('Expected Return')
+        ax_ef.set_title('Efficient Frontier')
+        ax_ef.legend()
         st.pyplot(fig_ef)
 
-        # Max Sharpe Ratio Portfolio
-        max_sharpe_idx = np.argmax(results[2])
-        st.write("Maximum Sharpe Ratio Portfolio:")
-        st.write(f"Return: {results[0,max_sharpe_idx]:.2f}")
-        st.write(f"Volatility: {results[1,max_sharpe_idx]:.2f}")
-        st.write(f"Sharpe Ratio: {results[2,max_sharpe_idx]:.2f}")
+        # Max Sharpe Optimization
+        st.write("### Maximum Sharpe Ratio Portfolio")
+        result_sharpe = optimizer.optimize(method='max_sharpe')
+
+        if result_sharpe.success:
+            st.write(f"Expected Return: {result_sharpe.performance['expected_return']:.4f}")
+            st.write(f"Volatility: {result_sharpe.performance['volatility']:.4f}")
+            st.write(f"Sharpe Ratio: {result_sharpe.performance['sharpe_ratio']:.4f}")
+
+            # Plot Weights
+            weights_df = pd.Series(result_sharpe.weights).sort_values(ascending=False)
+            fig_weights, ax_weights = plt.subplots(figsize=(10, 6))
+            weights_df.plot(kind='bar', ax=ax_weights)
+            ax_weights.set_title('Portfolio Weights (Max Sharpe)')
+            st.pyplot(fig_weights)
+        else:
+            st.error(f"Optimization failed: {result_sharpe.message}")
+
+        # Min Variance Optimization
+        st.write("### Minimum Variance Portfolio")
+        result_min_var = optimizer.optimize(method='min_variance')
+
+        if result_min_var.success:
+            st.write(f"Expected Return: {result_min_var.performance['expected_return']:.4f}")
+            st.write(f"Volatility: {result_min_var.performance['volatility']:.4f}")
+            st.write(f"Sharpe Ratio: {result_min_var.performance['sharpe_ratio']:.4f}")
+
+
+        st.subheader("Hierarchical Risk Parity (HRP) Optimization")
+
+        # Initialize HRP Optimizer
+        hrp_optimizer = HierarchicalRiskParityOptimizer(returns_simple, cov_matrix)
+        result_hrp = hrp_optimizer.optimize()
+
+        if result_hrp.success:
+            st.write(f"Expected Return: {result_hrp.performance['expected_return']:.4f}")
+            st.write(f"Volatility: {result_hrp.performance['volatility']:.4f}")
+            st.write(f"Sharpe Ratio: {result_hrp.performance['sharpe_ratio']:.4f}")
+
+            # Plot Weights
+            weights_hrp_df = pd.Series(result_hrp.weights).sort_values(ascending=False)
+            fig_weights_hrp, ax_weights_hrp = plt.subplots(figsize=(10, 6))
+            weights_hrp_df.plot(kind='bar', ax=ax_weights_hrp)
+            ax_weights_hrp.set_title('Portfolio Weights (HRP)')
+            st.pyplot(fig_weights_hrp)
