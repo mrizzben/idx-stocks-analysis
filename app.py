@@ -13,9 +13,8 @@ from sklearn.cluster import AgglomerativeClustering
 import statsmodels.api as sm
 import yaml
 
-# Import from src
-from src.features.feature_extract import log_rate
 # Import from portfolio_optimizer
+from portfolio_optimizer.core.financial_metrics import log_rate
 from portfolio_optimizer.core.markowitz import MarkowitzOptimizer
 from portfolio_optimizer.core.hrp import HierarchicalRiskParityOptimizer
 
