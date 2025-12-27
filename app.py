@@ -11,14 +11,18 @@ from sklearn.cluster import KMeans
 from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.cluster import AgglomerativeClustering
 import statsmodels.api as sm
+import yaml
 
 # Import from src
 from src.features.feature_extract import log_rate
-# Import configuration
-from config import KOMPAS100_TICKERS
 # Import from portfolio_optimizer
 from portfolio_optimizer.core.markowitz import MarkowitzOptimizer
 from portfolio_optimizer.core.hrp import HierarchicalRiskParityOptimizer
+
+# Load configuration
+with open('config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+    KOMPAS100_TICKERS = config['tickers']
 
 # Set page config
 st.set_page_config(page_title="Portfolio Optimization", layout="wide")
