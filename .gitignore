@@ -166,3 +166,6 @@ cython_debug/
 #Project
 reports/
 *config.env
+.specify/
+.kilocode/
+.vscode/

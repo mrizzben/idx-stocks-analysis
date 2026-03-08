@@ -1,0 +1,33 @@
+# Python ignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+ENV/
+env/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git
+.git
+.gitignore
+
+# Project
+.vscode/
+.idea/
+.specify/
+specs/
+specs/**/*.md
+
+# Docker
+Dockerfile*
+docker-compose.yml
+
+# Data
+*.csv
+*.xlsx
