@@ -166,3 +166,6 @@ cython_debug/
 #Project
 reports/
 *config.env
+
+# Obsolete conda lockfile (uv/pyproject.toml + uv.lock is the env source of truth)
+environment.yml
