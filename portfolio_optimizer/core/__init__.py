@@ -5,6 +5,8 @@ This module provides the core optimization functionality for the portfolio optim
 It implements a factory pattern to create different types of portfolio optimizers.
 """
 
+import pandas as pd
+from typing import List
 from .base import BaseOptimizer, OptimizationResult
 from .markowitz import MarkowitzOptimizer
 from .hrp import HierarchicalRiskParityOptimizer
