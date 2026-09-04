@@ -169,3 +169,6 @@ reports/
 
 # Obsolete conda lockfile (uv/pyproject.toml + uv.lock is the env source of truth)
 environment.yml
+
+# local streamlit run log
+streamlit.log

@@ -45,31 +45,78 @@ tickers_input = st.sidebar.text_area(
     "Enter Stock Tickers (comma separated)", ", ".join(KOMPAS100_TICKERS)
 )
 
+if start_date >= end_date:
+    st.error("Start date must be before end date.")
+    st.stop()
+
 
 # Helper function to load data
-@st.cache_data
+@st.cache_data(ttl=3600)
 def load_data(tickers, start, end):
-    tickers_list = [t.strip() for t in tickers.split(",")]
+    tickers_list = [t.strip() for t in tickers.split(",") if t.strip()]
+    tickers_list = list(dict.fromkeys(tickers_list))  # dedupe, keep order
     if not tickers_list:
         return None
-    try:
-        data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)["Adj Close"]  # type: ignore[reportOptionalSubscript]  # fmt: skip
-        return data
-    except Exception as e:
-        st.error(f"Error downloading data: {e}")
-        return None
+    data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)["Adj Close"]  # type: ignore[reportOptionalSubscript]  # fmt: skip
+    if data is None or (hasattr(data, "empty") and data.empty):
+        raise ValueError("No price data returned — check the tickers and date range.")
+    if isinstance(data, pd.Series):  # single ticker -> Series; normalize to DataFrame
+        data = data.to_frame(name=tickers_list[0])
+    # Drop tickers with no data at all (delisted/suspended)
+    data = data.dropna(axis=1, how="all")
+    return data
+
+
+@st.cache_data
+def elbow_inertias(X) -> list[float]:
+    """Inertia for k=2..min(20, n_samples); cached — 18 KMeans fits per data change."""
+    inertias = []
+    for k in range(2, min(20, len(X))):
+        inertia = KMeans(n_clusters=k, random_state=42).fit(X).inertia_
+        if inertia is None:
+            raise RuntimeError(f"KMeans produced no inertia for k={k}")
+        inertias.append(float(inertia))
+    return inertias
+
+
+@st.cache_data
+def fit_kmeans(X, k):
+    km = KMeans(n_clusters=k, random_state=42).fit(X)
+    return km.predict(X), km.cluster_centers_
+
+
+@st.cache_data
+def efficient_frontier(returns, cov, n_points=50):
+    return MarkowitzOptimizer(returns, cov).get_efficient_frontier(n_points)
+
+
+@st.cache_data
+def run_optimizer(returns, cov, method):
+    return MarkowitzOptimizer(returns, cov).optimize(method=method)
+
+
+@st.cache_data
+def run_hrp(returns, cov):
+    return HierarchicalRiskParityOptimizer(returns, cov).optimize()
 
 
 # Load data
 if st.sidebar.button("Load Data"):
     with st.spinner("Downloading stock data..."):
-        data = load_data(tickers_input, start_date, end_date)
-        if data is not None:
-            st.session_state["data"] = data
-            st.success("Data loaded successfully!")
+        try:
+            data = load_data(tickers_input, start_date, end_date)
+        except Exception as e:
+            st.error(f"Error downloading data: {e}")
+        else:
+            if data is not None:
+                st.session_state["data"] = data
+                st.success("Data loaded successfully!")
 
 if "data" in st.session_state:
     df = st.session_state["data"]
+    if df.empty:
+        st.error("Loaded data is empty — try a different date range or tickers.")
+        st.stop()
 
     # Data Overview
     st.header("Data Overview")
@@ -77,8 +124,8 @@ if "data" in st.session_state:
     st.dataframe(df.head())
 
     st.subheader("Price History")
-    # Normalize for better visualization
-    df_norm = df / df.iloc[0]
+    # Normalize from each ticker's first valid price (handles late-IPO NaNs)
+    df_norm = df.div(df.bfill().iloc[0])
     st.line_chart(df_norm)
 
     # Returns calculation using log_rate from src
@@ -105,7 +152,9 @@ if "data" in st.session_state:
     returns_df = returns_df.replace([np.inf, -np.inf], np.nan).dropna()
 
     if len(returns_df) < 2:
-        st.error("Fewer than 2 tickers have valid price data — clustering needs at least 2.")
+        st.error(
+            "Fewer than 2 tickers have valid price data — clustering needs at least 2."
+        )
         st.stop()
 
     # Calculate Correlation
@@ -118,26 +167,23 @@ if "data" in st.session_state:
 
     # Elbow Method
     st.subheader("Elbow Curve to find optimal K")
-    distorsions = []
-    for k in range(2, 20):
-        k_means = KMeans(n_clusters=k)
-        k_means.fit(X)
-        distorsions.append(k_means.inertia_)
+    distorsions = elbow_inertias(X)
+    ks = range(2, 2 + len(distorsions))
 
     fig_elbow, ax_elbow = plt.subplots(figsize=(10, 5))
-    ax_elbow.plot(range(2, 20), distorsions)
+    ax_elbow.plot(ks, distorsions)
     ax_elbow.grid(True)
     ax_elbow.set_title("Elbow Curve")
     st.pyplot(fig_elbow)
+    plt.close(fig_elbow)
 
     # K-Means Clustering
-    k_clusters = st.sidebar.slider("Number of Clusters (K-Means)", 2, 10, 5)
+    # Clamp k so it never exceeds the number of valid tickers (sklearn requires n_samples >= k)
+    k_clusters = min(
+        st.sidebar.slider("Number of Clusters (K-Means)", 2, 10, 5), len(X)
+    )
 
-    # Using sklearn for KMeans as scipy vq is not imported and slightly different API
-    kmeans = KMeans(n_clusters=k_clusters)
-    kmeans.fit(X)
-    labels = kmeans.predict(X)
-    centroids = kmeans.cluster_centers_
+    labels, centroids = fit_kmeans(X, k_clusters)
 
     details = [
         (name, cluster) for name, cluster in zip(returns_df.index, labels, strict=True)
@@ -154,6 +200,7 @@ if "data" in st.session_state:
         ax_cluster.annotate(txt, (X[i, 0], X[i, 1]))
 
     st.pyplot(fig_cluster)
+    plt.close(fig_cluster)
 
     st.write("Cluster Details:")
     cluster_df = pd.DataFrame(details, columns=["Ticker", "Cluster"])  # type: ignore[reportArgumentType]
@@ -166,6 +213,7 @@ if "data" in st.session_state:
     linked = linkage(X, "ward")
     dendrogram(linked, labels=returns_df.index, ax=ax_dendro, leaf_rotation=90)
     st.pyplot(fig_dendro)
+    plt.close(fig_dendro)
 
     # Optimization (Simple Mean-Variance for selected cluster)
     st.header("Portfolio Optimization")
@@ -184,6 +232,13 @@ if "data" in st.session_state:
 
         cluster_data = df[cluster_tickers]
 
+        if len(cluster_tickers) < 2:
+            st.warning(
+                "Cluster has fewer than 2 valid tickers — too small to optimize. "
+                "Select a different cluster."
+            )
+            st.stop()
+
         # Prepare data for optimization
         # Note: portfolio_optimizer modules typically expect simple returns for calculating final stats
         # but check documentation if log returns are preferred. Markowitz usually uses arithmetic mean/cov.
@@ -192,11 +247,8 @@ if "data" in st.session_state:
 
         st.subheader("Mean-Variance Optimization")
 
-        # Initialize Optimizer
-        optimizer = MarkowitzOptimizer(returns_simple, cov_matrix)
-
-        # Calculate Efficient Frontier
-        ef_points = optimizer._calculate_efficient_frontier(n_points=50)
+        # Calculate Efficient Frontier (cached — 50 QP solves)
+        ef_points = efficient_frontier(returns_simple, cov_matrix, n_points=50)
 
         fig_ef, ax_ef = plt.subplots(figsize=(10, 6))
         ax_ef.plot(
@@ -207,10 +259,11 @@ if "data" in st.session_state:
         ax_ef.set_title("Efficient Frontier")
         ax_ef.legend()
         st.pyplot(fig_ef)
+        plt.close(fig_ef)
 
         # Max Sharpe Optimization
         st.write("### Maximum Sharpe Ratio Portfolio")
-        result_sharpe = optimizer.optimize(method="max_sharpe")
+        result_sharpe = run_optimizer(returns_simple, cov_matrix, "max_sharpe")
 
         if result_sharpe.success:
             st.write(
@@ -225,12 +278,13 @@ if "data" in st.session_state:
             weights_df.plot(kind="bar", ax=ax_weights)
             ax_weights.set_title("Portfolio Weights (Max Sharpe)")
             st.pyplot(fig_weights)
+            plt.close(fig_weights)
         else:
             st.error(f"Optimization failed: {result_sharpe.message}")
 
         # Min Variance Optimization
         st.write("### Minimum Variance Portfolio")
-        result_min_var = optimizer.optimize(method="min_variance")
+        result_min_var = run_optimizer(returns_simple, cov_matrix, "min_variance")
 
         if result_min_var.success:
             st.write(
@@ -238,12 +292,12 @@ if "data" in st.session_state:
             )
             st.write(f"Volatility: {result_min_var.performance['volatility']:.4f}")
             st.write(f"Sharpe Ratio: {result_min_var.performance['sharpe_ratio']:.4f}")
+        else:
+            st.error(f"Optimization failed: {result_min_var.message}")
 
         st.subheader("Hierarchical Risk Parity (HRP) Optimization")
 
-        # Initialize HRP Optimizer
-        hrp_optimizer = HierarchicalRiskParityOptimizer(returns_simple, cov_matrix)
-        result_hrp = hrp_optimizer.optimize()
+        result_hrp = run_hrp(returns_simple, cov_matrix)
 
         if result_hrp.success:
             st.write(
@@ -258,3 +312,6 @@ if "data" in st.session_state:
             weights_hrp_df.plot(kind="bar", ax=ax_weights_hrp)
             ax_weights_hrp.set_title("Portfolio Weights (HRP)")
             st.pyplot(fig_weights_hrp)
+            plt.close(fig_weights_hrp)
+        else:
+            st.error(f"HRP optimization failed: {result_hrp.message}")

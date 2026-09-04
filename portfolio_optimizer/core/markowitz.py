@@ -3,42 +3,44 @@
 This module implements the Markowitz mean-variance optimization algorithm.
 """
 
+
+import cvxpy as cp
 import numpy as np
 import pandas as pd
-import cvxpy as cp
-from typing import Dict, Optional, Union, Any, List
+
 from .base import BaseOptimizer, OptimizationResult
+
 
 class MarkowitzOptimizer(BaseOptimizer):
     """
     Implementation of the Markowitz Mean-Variance Optimization algorithm.
-    
+
     This class provides methods to find optimal portfolio weights using the
     mean-variance framework, including minimum variance, maximum Sharpe ratio,
     and target return optimization.
     """
-    
+
     def __init__(self, returns: pd.DataFrame, covariance_matrix: pd.DataFrame):
         """
         Initialize the Markowitz optimizer.
-        
+
         Args:
             returns: Historical returns for assets (n_assets × n_periods)
             covariance_matrix: Asset covariance matrix (n_assets × n_assets)
         """
         super().__init__(returns, covariance_matrix)
         self.efficient_frontier_points = None
-    
-    def optimize(self, method: str = 'max_sharpe', target_return: Optional[float] = None, 
-                risk_aversion: float = 1.0) -> OptimizationResult:
+
+    def optimize(self, method: str = 'max_sharpe', target_return: float | None = None,
+                risk_aversion: float = 1.0, **kwargs) -> OptimizationResult:
         """
         Run Markowitz optimization using the specified method.
-        
+
         Args:
             method: Optimization method ('max_sharpe', 'min_variance', 'target_return')
             target_return: Target return for 'target_return' optimization
             risk_aversion: Risk aversion parameter for mean-variance optimization
-            
+
         Returns:
             OptimizationResult: Results of the portfolio optimization
         """
@@ -53,163 +55,155 @@ class MarkowitzOptimizer(BaseOptimizer):
                 weights = self._optimize_target_return(target_return, risk_aversion)
             else:
                 raise ValueError(f"Unknown optimization method: {method}")
-            
+
             # Calculate performance metrics
             performance = self._calculate_performance_metrics(weights)
-            
-            # Create method-specific output
+
+            if not self._validate_weights(weights):
+                raise ValueError("Computed weights violate the sum-to-one / long-only constraints")
+
+            # Create method-specific output (frontier only if already computed —
+            # computing it here would add 50 QP solves to every optimize() call)
             method_specific = {
-                'efficient_frontier': self._calculate_efficient_frontier() if method != 'efficient_frontier' else self.efficient_frontier_points,
+                'efficient_frontier': self.efficient_frontier_points,
                 'method': method
             }
-            
+
             return OptimizationResult(
-                weights=dict(zip(self.returns.columns, weights)),
+                weights=dict(zip(self.returns.columns, weights, strict=True)),
                 performance=performance,
                 method_specific=method_specific,
                 success=True
             )
-            
+
         except Exception as e:
             return OptimizationResult(
-                weights={asset: 0.0 for asset in self.returns.columns},
+                weights=dict.fromkeys(self.returns.columns, 0.0),
                 performance={},
                 method_specific={'error': str(e)},
                 success=False,
                 message=f"Optimization failed: {str(e)}"
             )
-    
+
     def _optimize_max_sharpe(self) -> np.ndarray:
-        """Optimize portfolio for maximum Sharpe ratio."""
+        """Optimize portfolio for maximum Sharpe ratio.
+
+        Direct maximization of ret/risk is not DCP, so use the standard
+        Cornuejols-Tütüncü reformulation: minimize y'Σy s.t.
+        (mu - rf)'y = 1, y >= 0, then normalize w = y / sum(y).
+        """
         n_assets = self.n_assets
-        
-        # Define optimization variables
-        weights = cp.Variable(n_assets)
-        mu = cp.Parameter(n_assets)
-        Sigma = cp.Parameter((n_assets, n_assets))
-        
-        # Set parameter values
-        mu.value = self.returns.mean().values
-        Sigma.value = self.covariance_matrix.values
-        
-        # Define optimization problem
-        risk = cp.quad_form(weights, Sigma)
-        ret = mu @ weights
-        
-        # Sharpe ratio optimization (maximize return/risk)
-        objective = cp.Maximize(ret / risk)
-        
-        # Constraints: fully invested portfolio
+        Sigma = self.covariance_matrix.values
+        mu = np.asarray(self.returns.mean())
+        # Risk-free rate per period (0.02 annual / 252 daily periods)
+        rf = 0.02 / 252
+
+        y = cp.Variable(n_assets)
+        excess = (mu - rf) @ y
+
         constraints = [
-            cp.sum(weights) == 1,
-            weights >= 0  # Long-only positions
+            excess == 1,
+            y >= 0
         ]
-        
-        problem = cp.Problem(objective, constraints)
-        
-        # Solve optimization problem
+        problem = cp.Problem(cp.Minimize(cp.quad_form(y, Sigma)), constraints)
         problem.solve()
-        
-        if problem.status != cp.OPTIMAL:
+
+        if problem.status != cp.OPTIMAL or y.value is None:
             raise RuntimeError(f"Optimization failed to converge: {problem.status}")
-            
-        return weights.value
-    
+
+        # Clip solver-tolerance negatives before normalizing
+        y_val = np.clip(y.value, 0.0, None)
+        return y_val / np.sum(y_val)
+
     def _optimize_min_variance(self) -> np.ndarray:
         """Optimize portfolio for minimum variance."""
         n_assets = self.n_assets
-        
+        Sigma = self.covariance_matrix.values
+
         # Define optimization variables
         weights = cp.Variable(n_assets)
-        Sigma = cp.Parameter((n_assets, n_assets))
-        
-        # Set parameter values
-        Sigma.value = self.covariance_matrix.values
-        
+
         # Define optimization problem
         risk = cp.quad_form(weights, Sigma)
-        
+
         # Objective: minimize portfolio variance
         objective = cp.Minimize(risk)
-        
+
         # Constraints: fully invested portfolio
         constraints = [
             cp.sum(weights) == 1,
             weights >= 0  # Long-only positions
         ]
-        
+
         problem = cp.Problem(objective, constraints)
-        
+
         # Solve optimization problem
         problem.solve()
-        
-        if problem.status != cp.OPTIMAL:
+
+        if problem.status != cp.OPTIMAL or weights.value is None:
             raise RuntimeError(f"Optimization failed to converge: {problem.status}")
-            
+
         return weights.value
-    
-    def _optimize_target_return(self, target_return: float, 
+
+    def _optimize_target_return(self, target_return: float,
                               risk_aversion: float = 1.0) -> np.ndarray:
         """Optimize portfolio for a target return with risk aversion."""
         n_assets = self.n_assets
-        
+        Sigma = self.covariance_matrix.values
+        mu = np.asarray(self.returns.mean())
+
         # Define optimization variables
         weights = cp.Variable(n_assets)
-        mu = cp.Parameter(n_assets)
-        Sigma = cp.Parameter((n_assets, n_assets))
-        
-        # Set parameter values
-        mu.value = self.returns.mean().values
-        Sigma.value = self.covariance_matrix.values
-        
+
         # Define optimization problem
         risk = cp.quad_form(weights, Sigma)
         ret = mu @ weights
-        
+
         # Objective: balance between risk and return
         objective = cp.Minimize(risk_aversion * risk - ret)
-        
+
         # Constraints: target return and fully invested portfolio
         constraints = [
             cp.sum(weights) == 1,
             ret >= target_return,
             weights >= 0  # Long-only positions
         ]
-        
+
         problem = cp.Problem(objective, constraints)
-        
+
         # Solve optimization problem
         problem.solve()
-        
-        if problem.status != cp.OPTIMAL:
+
+        if problem.status != cp.OPTIMAL or weights.value is None:
             raise RuntimeError(f"Optimization failed to converge: {problem.status}")
-            
+
         return weights.value
-    
-    def _calculate_efficient_frontier(self, n_points: int = 50) -> Dict[str, List[float]]:
-        """Calculate the efficient frontier."""
+
+    def get_efficient_frontier(self, n_points: int = 50) -> dict[str, list[float]]:
+        """Calculate the efficient frontier (public API)."""
         if self.efficient_frontier_points is not None:
             return self.efficient_frontier_points
-            
-        min_return = self.returns.mean().min()
-        max_return = self.returns.mean().max()
-        
+
+        mu = np.asarray(self.returns.mean())
+        min_return = mu.min()
+        max_return = mu.max()
+
         risk_levels = []
         returns_levels = []
         sharpe_ratios = []
-        
+
         for target_return in np.linspace(min_return, max_return, n_points):
             weights = self._optimize_target_return(target_return)
             perf = self._calculate_performance_metrics(weights)
-            
+
             risk_levels.append(perf['volatility'])
             returns_levels.append(perf['expected_return'])
             sharpe_ratios.append(perf['sharpe_ratio'])
-        
+
         self.efficient_frontier_points = {
             'returns': returns_levels,
             'risk': risk_levels,
             'sharpe_ratios': sharpe_ratios
         }
-        
+
         return self.efficient_frontier_points

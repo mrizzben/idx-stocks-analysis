@@ -23,7 +23,7 @@ class OptimizationResult:
     """
     weights: Dict[str, float]
     performance: Dict[str, float]
-    method_specific: Dict[str, Any] = None
+    method_specific: dict[str, Any] | None = None
     success: bool = True
     message: str = "Optimization completed successfully"
 
@@ -50,12 +50,15 @@ class BaseOptimizer(ABC):
     
     def _validate_inputs(self):
         """Validate input data consistency and quality."""
-        # Check for valid dimensions
-        if self.returns.shape[1] != self.n_assets:
-            raise ValueError("Returns and covariance matrix have mismatched dimensions")
+        # Check covariance matrix dimensions match the returns columns
+        if self.covariance_matrix.shape != (self.n_assets, self.n_assets):
+            raise ValueError(
+                f"Covariance matrix shape {self.covariance_matrix.shape} does not match "
+                f"number of assets ({self.n_assets})"
+                )
         
         # Check for missing values
-        if self.returns.isnull().any().any():
+        if self.returns.isnull().values.any():
             raise ValueError("Returns data contains missing values")
         
         # Check for valid covariance matrix
@@ -81,18 +84,23 @@ class BaseOptimizer(ABC):
         if not np.isclose(np.sum(weights), 1.0, atol=1e-6):
             return False
         
-        # Check weights are within [0, 1] range
-        if np.any(weights < 0) or np.any(weights > 1):
+        # Check weights are within [0, 1] range (with solver tolerance)
+        if np.any(weights < -1e-8) or np.any(weights > 1 + 1e-8):
             return False
         
         return True
     
     def _calculate_performance_metrics(self, weights: np.ndarray) -> Dict[str, float]:
-        """Calculate portfolio performance metrics."""
-        # Calculate expected return
-        expected_return = np.sum(self.returns.mean() * weights)
+        """Calculate portfolio performance metrics.
+
+        Contract: ``returns`` holds per-period (daily) returns, while
+        ``covariance_matrix`` is ANNUALIZED. Expected return is therefore
+        annualized here (x252) so return, volatility and Sharpe share one scale.
+        """
+        # Annualized expected return (daily mean x 252 trading days)
+        expected_return = float(np.sum(self.returns.mean() * weights)) * 252
         
-        # Calculate portfolio volatility
+        # Calculate portfolio volatility (already annualized via covariance_matrix)
         volatility = np.sqrt(np.dot(weights.T, np.dot(self.covariance_matrix, weights)))
         
         # Calculate Sharpe ratio (assuming risk-free rate of 0.02)
