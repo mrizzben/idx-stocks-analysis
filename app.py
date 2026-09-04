@@ -53,9 +53,7 @@ def load_data(tickers, start, end):
     if not tickers_list:
         return None
     try:
-        data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)[
-            "Adj Close"
-        ]  # type: ignore[reportOptionalSubscript]
+        data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)["Adj Close"]  # type: ignore[reportOptionalSubscript]  # fmt: skip
         return data
     except Exception as e:
         st.error(f"Error downloading data: {e}")
@@ -101,6 +99,14 @@ if "data" in st.session_state:
     returns_df = pd.DataFrame()
     returns_df["Returns"] = returns_mean
     returns_df["Volatility"] = returns_volatility
+
+    # Drop tickers with missing/infinite stats — otherwise a single NaN price
+    # propagates through log_rate -> mean/std and KMeans rejects it.
+    returns_df = returns_df.replace([np.inf, -np.inf], np.nan).dropna()
+
+    if len(returns_df) < 2:
+        st.error("Fewer than 2 tickers have valid price data — clustering needs at least 2.")
+        st.stop()
 
     # Calculate Correlation
     st.header("Clustering Analysis")
