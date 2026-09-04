@@ -53,7 +53,9 @@ def load_data(tickers, start, end):
     if not tickers_list:
         return None
     try:
-        data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)["Adj Close"]  # type: ignore[reportOptionalSubscript]
+        data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)[
+            "Adj Close"
+        ]  # type: ignore[reportOptionalSubscript]
         return data
     except Exception as e:
         st.error(f"Error downloading data: {e}")
