@@ -1,7 +1,6 @@
 import datetime as dt
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -178,12 +177,11 @@ if "data" in st.session_state:
     distorsions = elbow_inertias(X)
     ks = range(2, 2 + len(distorsions))
 
-    fig_elbow, ax_elbow = plt.subplots(figsize=(10, 5))
-    ax_elbow.plot(ks, distorsions)
-    ax_elbow.grid(True)
-    ax_elbow.set_title("Elbow Curve")
-    st.pyplot(fig_elbow)
-    plt.close(fig_elbow)
+    st.line_chart(
+        pd.DataFrame({"Inertia": distorsions}, index=pd.Index(ks)),
+        x_label="Number of Clusters (k)",
+        y_label="Inertia",
+    )
 
     # K-Means Clustering
     # Clamp k so it never exceeds the number of valid tickers (sklearn requires n_samples >= k)
@@ -197,18 +195,24 @@ if "data" in st.session_state:
         (name, cluster) for name, cluster in zip(returns_df.index, labels, strict=True)
     ]
 
-    fig_cluster, ax_cluster = plt.subplots(figsize=(10, 8))
-    ax_cluster.scatter(X[:, 0], X[:, 1], c=labels, cmap="rainbow", alpha=0.7, s=100)
-    ax_cluster.scatter(centroids[:, 0], centroids[:, 1], marker="x", s=100, c="black")
-    ax_cluster.set_xlabel("Annualized Returns")
-    ax_cluster.set_ylabel("Annualized Volatility")
-    ax_cluster.set_title("K-Means Clustering")
-
-    for i, txt in enumerate(returns_df.index):
-        ax_cluster.annotate(txt, (X[i, 0], X[i, 1]))
-
-    st.pyplot(fig_cluster)
-    plt.close(fig_cluster)
+    scatter_data = pd.DataFrame(
+        {
+            "Returns": np.concatenate([X[:, 0], centroids[:, 0]]),
+            "Volatility": np.concatenate([X[:, 1], centroids[:, 1]]),
+            "Ticker": [str(t) for t in returns_df.index] + [""] * len(centroids),
+            "Cluster": [str(label) for label in labels] + ["Centroid"] * len(centroids),
+            "Size": [60] * len(X) + [240] * len(centroids),
+        }
+    )
+    st.scatter_chart(
+        scatter_data,
+        x="Returns",
+        y="Volatility",
+        x_label="Annualized Returns",
+        y_label="Annualized Volatility",
+        color="Cluster",
+        size="Size",
+    )
 
     st.write("Cluster Details:")
     cluster_df = pd.DataFrame(details, columns=["Ticker", "Cluster"])  # type: ignore[reportArgumentType]
@@ -217,11 +221,55 @@ if "data" in st.session_state:
     # Hierarchical Clustering
     st.subheader("Hierarchical Clustering")
 
-    fig_dendro, ax_dendro = plt.subplots(figsize=(12, 6))
     linked = linkage(X, "ward")
-    dendrogram(linked, labels=returns_df.index, ax=ax_dendro, leaf_rotation=90)
-    st.pyplot(fig_dendro)
-    plt.close(fig_dendro)
+    den = dendrogram(linked, no_plot=True)
+    # Flatten each link's 4-point polyline into 3 segments for vega-lite line marks
+    segments = pd.DataFrame(
+        [
+            {"x": xs[j], "y": ys[j], "segment": f"{i}-{j}"}
+            for i, (xs, ys) in enumerate(zip(den["icoord"], den["dcoord"], strict=True))
+            for j in range(3)
+        ]
+    )
+    # Leaf positions are 5 + 10*i in left-to-right order (ivl); map them onto the
+    # axis so tick labels show ticker names at the x values the links actually use.
+    leaf_expr = (
+        " || ".join(
+            f"datum.value == {5 + 10 * i} ? '{label}'"
+            for i, label in enumerate(den["ivl"])
+        )
+        + " || ''"
+    )
+    st.vega_lite_chart(
+        segments,
+        {
+            "mark": {"type": "line", "stroke": "#4c78a8", "strokeWidth": 1.2},
+            "encoding": {
+                "x": {
+                    "field": "x",
+                    "type": "quantitative",
+                    "title": None,
+                    "axis": {
+                        "labelAngle": 90,
+                        "labelFontSize": 10,
+                        "labelLimit": 200,
+                        "labelExpr": leaf_expr,
+                    },
+                },
+                "y": {
+                    "field": "y",
+                    "type": "quantitative",
+                    "title": "Merge Distance",
+                },
+                "detail": {"field": "segment", "type": "nominal"},
+            },
+            # Interval selection bound to scales -> scroll/box zoom + pan
+            "params": [
+                {"name": "zoom", "select": {"type": "interval", "bind": "scales"}}
+            ],
+        },
+        width="stretch",
+    )
 
     # Optimization (Simple Mean-Variance for selected cluster)
     st.header("Portfolio Optimization")
@@ -258,16 +306,13 @@ if "data" in st.session_state:
         # Calculate Efficient Frontier (cached — 50 QP solves)
         ef_points = efficient_frontier(returns_simple, cov_matrix, n_points=20)
 
-        fig_ef, ax_ef = plt.subplots(figsize=(10, 6))
-        ax_ef.plot(
-            ef_points["risk"], ef_points["returns"], "b-", label="Efficient Frontier"
+        ef_line = pd.DataFrame(
+            {
+                "Volatility": ef_points["risk"],
+                "Expected Return": ef_points["returns"],
+            }
         )
-        ax_ef.set_xlabel("Volatility")
-        ax_ef.set_ylabel("Expected Return")
-        ax_ef.set_title("Efficient Frontier")
-        ax_ef.legend()
-        st.pyplot(fig_ef)
-        plt.close(fig_ef)
+        st.line_chart(ef_line, x="Volatility", y="Expected Return")
 
         # Max Sharpe Optimization
         st.write("### Maximum Sharpe Ratio Portfolio")
@@ -282,11 +327,7 @@ if "data" in st.session_state:
 
             # Plot Weights
             weights_df = pd.Series(result_sharpe.weights).sort_values(ascending=False)
-            fig_weights, ax_weights = plt.subplots(figsize=(10, 6))
-            weights_df.plot(kind="bar", ax=ax_weights)
-            ax_weights.set_title("Portfolio Weights (Max Sharpe)")
-            st.pyplot(fig_weights)
-            plt.close(fig_weights)
+            st.bar_chart(weights_df.to_frame("Weight"))
         else:
             st.error(f"Optimization failed: {result_sharpe.message}")
 
@@ -316,10 +357,6 @@ if "data" in st.session_state:
 
             # Plot Weights
             weights_hrp_df = pd.Series(result_hrp.weights).sort_values(ascending=False)
-            fig_weights_hrp, ax_weights_hrp = plt.subplots(figsize=(10, 6))
-            weights_hrp_df.plot(kind="bar", ax=ax_weights_hrp)
-            ax_weights_hrp.set_title("Portfolio Weights (HRP)")
-            st.pyplot(fig_weights_hrp)
-            plt.close(fig_weights_hrp)
+            st.bar_chart(weights_hrp_df.to_frame("Weight"))
         else:
             st.error(f"HRP optimization failed: {result_hrp.message}")
