@@ -41,7 +41,9 @@ combined with modern portfolio optimization methods (mean-variance and hierarchi
 st.sidebar.header("Configuration")
 MAX_LOOKBACK_YEARS = 5  # keep downloads light — cloud instances have ~1 GB RAM
 earliest_start = dt.date.today() - dt.timedelta(days=365 * MAX_LOOKBACK_YEARS)
-start_date = st.sidebar.date_input("Start Date", earliest_start, min_value=earliest_start)
+start_date = st.sidebar.date_input(
+    "Start Date", earliest_start, min_value=earliest_start
+)
 end_date = st.sidebar.date_input("End Date", dt.date.today())
 tickers_input = st.sidebar.text_area(
     "Enter Stock Tickers (comma separated)", ", ".join(KOMPAS100_TICKERS)
@@ -248,7 +250,7 @@ if "data" in st.session_state:
         # Prepare data for optimization
         # Note: portfolio_optimizer modules typically expect simple returns for calculating final stats
         # but check documentation if log returns are preferred. Markowitz usually uses arithmetic mean/cov.
-        returns_simple = cluster_data.pct_change().dropna()
+        returns_simple = cluster_data.pct_change(fill_method=None).dropna()
         cov_matrix = returns_simple.cov() * 252
 
         st.subheader("Mean-Variance Optimization")
