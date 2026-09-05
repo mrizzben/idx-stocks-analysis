@@ -39,7 +39,9 @@ combined with modern portfolio optimization methods (mean-variance and hierarchi
 
 # Sidebar controls
 st.sidebar.header("Configuration")
-start_date = st.sidebar.date_input("Start Date", dt.date(2010, 1, 1))
+MAX_LOOKBACK_YEARS = 5  # keep downloads light — cloud instances have ~1 GB RAM
+earliest_start = dt.date.today() - dt.timedelta(days=365 * MAX_LOOKBACK_YEARS)
+start_date = st.sidebar.date_input("Start Date", earliest_start, min_value=earliest_start)
 end_date = st.sidebar.date_input("End Date", dt.date.today())
 tickers_input = st.sidebar.text_area(
     "Enter Stock Tickers (comma separated)", ", ".join(KOMPAS100_TICKERS)
@@ -57,14 +59,15 @@ def load_data(tickers, start, end):
     tickers_list = list(dict.fromkeys(tickers_list))  # dedupe, keep order
     if not tickers_list:
         return None
-    data = yf.download(tickers_list, start=start, end=end, auto_adjust=False)["Adj Close"]  # type: ignore[reportOptionalSubscript]  # fmt: skip
+    data = yf.download(tickers_list, start=start, end=end, auto_adjust=False, progress=False)["Adj Close"]  # type: ignore[reportOptionalSubscript]  # fmt: skip
     if data is None or (hasattr(data, "empty") and data.empty):
         raise ValueError("No price data returned — check the tickers and date range.")
     if isinstance(data, pd.Series):  # single ticker -> Series; normalize to DataFrame
         data = data.to_frame(name=tickers_list[0])
     # Drop tickers with no data at all (delisted/suspended)
     data = data.dropna(axis=1, how="all")
-    return data
+    # float32 halves memory across every downstream copy — plenty for prices
+    return data.astype("float32")
 
 
 @st.cache_data
@@ -126,6 +129,9 @@ if "data" in st.session_state:
     st.subheader("Price History")
     # Normalize from each ticker's first valid price (handles late-IPO NaNs)
     df_norm = df.div(df.bfill().iloc[0])
+    # Downsample long ranges — 100 series x 1200+ daily rows chokes the browser
+    if len(df_norm) > 260:
+        df_norm = df_norm.resample("W-FRI").last().dropna(how="all")
     st.line_chart(df_norm)
 
     # Returns calculation using log_rate from src
@@ -248,7 +254,7 @@ if "data" in st.session_state:
         st.subheader("Mean-Variance Optimization")
 
         # Calculate Efficient Frontier (cached — 50 QP solves)
-        ef_points = efficient_frontier(returns_simple, cov_matrix, n_points=50)
+        ef_points = efficient_frontier(returns_simple, cov_matrix, n_points=20)
 
         fig_ef, ax_ef = plt.subplots(figsize=(10, 6))
         ax_ef.plot(
