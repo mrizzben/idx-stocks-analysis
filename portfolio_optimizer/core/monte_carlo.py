@@ -3,7 +3,6 @@
 This module implements the Monte Carlo simulation-based portfolio optimization algorithm.
 """
 
-
 import numpy as np
 import pandas as pd
 
@@ -29,10 +28,14 @@ class MonteCarloOptimizer(BaseOptimizer):
         super().__init__(returns, covariance_matrix)
         self.simulation_results = None
 
-    def optimize(self, n_simulations: int = 10000,
-                optimization_criterion: str = 'sharpe_ratio',
-                target_return: float | None = None,
-                target_volatility: float | None = None, **kwargs) -> OptimizationResult:
+    def optimize(
+        self,
+        n_simulations: int = 10000,
+        optimization_criterion: str = "sharpe_ratio",
+        target_return: float | None = None,
+        target_volatility: float | None = None,
+        **kwargs,
+    ) -> OptimizationResult:
         """
         Run Monte Carlo optimization.
 
@@ -48,21 +51,23 @@ class MonteCarloOptimizer(BaseOptimizer):
         """
         try:
             # Generate random portfolios
-            portfolio_weights, portfolio_metrics = self._generate_portfolios(n_simulations)
+            portfolio_weights, portfolio_metrics = self._generate_portfolios(
+                n_simulations
+            )
 
             # Find optimal portfolio based on selected criterion
             optimal_idx = self._find_optimal_portfolio(
                 portfolio_metrics,
                 optimization_criterion,
                 target_return,
-                target_volatility
+                target_volatility,
             )
 
             # Store simulation results
             self.simulation_results = {
-                'weights': portfolio_weights,
-                'metrics': portfolio_metrics,
-                'optimal_idx': optimal_idx
+                "weights": portfolio_weights,
+                "metrics": portfolio_metrics,
+                "optimal_idx": optimal_idx,
             }
 
             # Get optimal weights and metrics
@@ -71,26 +76,28 @@ class MonteCarloOptimizer(BaseOptimizer):
 
             # Create method-specific output
             method_specific = {
-                'efficient_frontier': self._extract_efficient_frontier(portfolio_metrics),
-                'optimization_criterion': optimization_criterion,
-                'n_simulations': n_simulations,
-                'all_metrics': portfolio_metrics.tolist()
+                "efficient_frontier": self._extract_efficient_frontier(
+                    portfolio_metrics
+                ),
+                "optimization_criterion": optimization_criterion,
+                "n_simulations": n_simulations,
+                "all_metrics": portfolio_metrics.tolist(),
             }
 
             return OptimizationResult(
                 weights=dict(zip(self.returns.columns, optimal_weights)),
                 performance=optimal_metrics,
                 method_specific=method_specific,
-                success=True
+                success=True,
             )
 
         except Exception as e:
             return OptimizationResult(
                 weights=dict.fromkeys(self.returns.columns, 0.0),
                 performance={},
-                method_specific={'error': str(e)},
+                method_specific={"error": str(e)},
                 success=False,
-                message=f"Optimization failed: {str(e)}"
+                message=f"Optimization failed: {str(e)}",
             )
 
     def _generate_portfolios(self, n_simulations: int) -> tuple:
@@ -99,11 +106,10 @@ class MonteCarloOptimizer(BaseOptimizer):
 
         # Initialize arrays to store results
         portfolio_weights = np.zeros((n_simulations, n_assets))
-        portfolio_metrics = np.zeros(n_simulations, dtype=[
-            ('return', float),
-            ('volatility', float),
-            ('sharpe_ratio', float)
-        ])
+        portfolio_metrics = np.zeros(
+            n_simulations,
+            dtype=[("return", float), ("volatility", float), ("sharpe_ratio", float)],
+        )
 
         # Generate random portfolios
         for i in range(n_simulations):
@@ -116,57 +122,70 @@ class MonteCarloOptimizer(BaseOptimizer):
 
             # Calculate performance metrics
             expected_return = np.sum(self.returns.mean() * weights)
-            volatility = np.sqrt(np.dot(weights.T, np.dot(self.covariance_matrix, weights)))
-            sharpe_ratio = (expected_return - 0.02) / volatility if volatility > 0 else 0
+            volatility = np.sqrt(
+                np.dot(weights.T, np.dot(self.covariance_matrix, weights))
+            )
+            sharpe_ratio = (
+                (expected_return - 0.02) / volatility if volatility > 0 else 0
+            )
 
             # Store metrics
             portfolio_metrics[i] = (expected_return, volatility, sharpe_ratio)
 
         return portfolio_weights, portfolio_metrics
 
-    def _find_optimal_portfolio(self, metrics, criterion, target_return, target_volatility):
+    def _find_optimal_portfolio(
+        self, metrics, criterion, target_return, target_volatility
+    ):
         """Find the optimal portfolio based on the selected criterion."""
-        if criterion == 'sharpe_ratio':
+        if criterion == "sharpe_ratio":
             # Find portfolio with highest Sharpe ratio
-            return np.argmax(metrics['sharpe_ratio'])
-        elif criterion == 'return':
+            return np.argmax(metrics["sharpe_ratio"])
+        elif criterion == "return":
             # Find portfolio with highest return
-            return np.argmax(metrics['return'])
-        elif criterion == 'risk':
+            return np.argmax(metrics["return"])
+        elif criterion == "risk":
             # Find portfolio with lowest volatility
-            return np.argmin(metrics['volatility'])
-        elif criterion == 'target_return':
+            return np.argmin(metrics["volatility"])
+        elif criterion == "target_return":
             if target_return is None:
-                raise ValueError("target_return must be provided for target return optimization")
+                raise ValueError(
+                    "target_return must be provided for target return optimization"
+                )
             # Find portfolio with closest return to target (with penalty for underperformance)
-            return np.argmin(np.abs(metrics['return'] - target_return) +
-                            0.1 * (metrics['return'] < target_return))
-        elif criterion == 'target_volatility':
+            return np.argmin(
+                np.abs(metrics["return"] - target_return)
+                + 0.1 * (metrics["return"] < target_return)
+            )
+        elif criterion == "target_volatility":
             if target_volatility is None:
-                raise ValueError("target_volatility must be provided for target volatility optimization")
+                raise ValueError(
+                    "target_volatility must be provided for target volatility optimization"
+                )
             # Find portfolio with closest volatility to target
-            return np.argmin(np.abs(metrics['volatility'] - target_volatility))
+            return np.argmin(np.abs(metrics["volatility"] - target_volatility))
         else:
             raise ValueError(f"Unknown optimization criterion: {criterion}")
 
     def _extract_efficient_frontier(self, metrics):
         """Extract the efficient frontier from simulated portfolios."""
         # Sort portfolios by Sharpe ratio
-        sorted_indices = np.argsort(metrics['sharpe_ratio'])[::-1]
+        sorted_indices = np.argsort(metrics["sharpe_ratio"])[::-1]
 
         # Initialize efficient frontier
         efficient_frontier = []
 
         # Find the maximum return for each level of volatility
-        min_volatility = float('inf')
+        min_volatility = float("inf")
         for idx in sorted_indices:
-            if metrics['volatility'][idx] < min_volatility:
-                efficient_frontier.append({
-                    'return': float(metrics['return'][idx]),
-                    'volatility': float(metrics['volatility'][idx]),
-                    'sharpe_ratio': float(metrics['sharpe_ratio'][idx])
-                })
-                min_volatility = metrics['volatility'][idx]
+            if metrics["volatility"][idx] < min_volatility:
+                efficient_frontier.append(
+                    {
+                        "return": float(metrics["return"][idx]),
+                        "volatility": float(metrics["volatility"][idx]),
+                        "sharpe_ratio": float(metrics["sharpe_ratio"][idx]),
+                    }
+                )
+                min_volatility = metrics["volatility"][idx]
 
         return efficient_frontier
-

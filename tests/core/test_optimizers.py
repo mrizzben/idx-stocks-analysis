@@ -27,7 +27,9 @@ def returns_and_cov():
 
 def _assert_valid_weights(weights, n):
     assert len(weights) == n
-    assert np.isclose(sum(weights.values()), 1.0, atol=1e-4), f"weights sum to {sum(weights.values())}"
+    assert np.isclose(sum(weights.values()), 1.0, atol=1e-4), (
+        f"weights sum to {sum(weights.values())}"
+    )
     assert all(w >= -1e-9 for w in weights.values()), "negative weight found"
 
 
@@ -37,7 +39,9 @@ def test_max_sharpe_succeeds(returns_and_cov):
     assert result.success, f"max_sharpe failed: {result.message}"
     _assert_valid_weights(result.weights, 5)
     # Sharpe must be positive-ish scale: annualized return vs annualized vol
-    assert result.performance["volatility"] > 0.01, "volatility looks like a daily scale"
+    assert result.performance["volatility"] > 0.01, (
+        "volatility looks like a daily scale"
+    )
 
 
 def test_min_variance_succeeds(returns_and_cov):
@@ -63,7 +67,9 @@ def test_hrp_weights_sum_to_one(returns_and_cov):
 
 def test_hrp_two_assets(returns_and_cov):
     returns, cov = returns_and_cov
-    result = HierarchicalRiskParityOptimizer(returns[["A", "B"]], cov.loc[["A", "B"], ["A", "B"]]).optimize()
+    result = HierarchicalRiskParityOptimizer(
+        returns[["A", "B"]], cov.loc[["A", "B"], ["A", "B"]]
+    ).optimize()
     assert result.success, f"HRP (2 assets) failed: {result.message}"
     _assert_valid_weights(result.weights, 2)
 
@@ -72,4 +78,6 @@ def test_frontier_consistent_scales(returns_and_cov):
     """Frontier returns must be annual-scale (comparable to its annual vol)."""
     returns, cov = returns_and_cov
     ef = MarkowitzOptimizer(returns, cov).get_efficient_frontier(n_points=10)
-    assert all(r > 0.005 for r in ef["returns"]), "frontier returns look like daily scale"
+    assert all(r > 0.005 for r in ef["returns"]), (
+        "frontier returns look like daily scale"
+    )

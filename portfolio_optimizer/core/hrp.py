@@ -3,7 +3,6 @@
 This module implements the Hierarchical Risk Parity optimization algorithm.
 """
 
-
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage
@@ -33,8 +32,9 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
         self.linkage_matrix = None
         self.cluster_assignments = None
 
-    def optimize(self, n_clusters: int | None = None,
-                linkage_method: str = 'average', **kwargs) -> OptimizationResult:
+    def optimize(
+        self, n_clusters: int | None = None, linkage_method: str = "average", **kwargs
+    ) -> OptimizationResult:
         """
         Run HRP optimization.
 
@@ -63,36 +63,40 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
             intra_cluster_weights = self._calculate_intra_cluster_weights()
 
             # Combine weights to get final portfolio weights
-            final_weights = self._combine_weights(cluster_weights, intra_cluster_weights)
+            final_weights = self._combine_weights(
+                cluster_weights, intra_cluster_weights
+            )
 
             if not self._validate_weights(final_weights):
-                raise ValueError("Computed weights violate the sum-to-one / long-only constraints")
+                raise ValueError(
+                    "Computed weights violate the sum-to-one / long-only constraints"
+                )
 
             # Calculate performance metrics
             performance = self._calculate_performance_metrics(final_weights)
 
             # Create method-specific output
             method_specific = {
-                'linkage_matrix': self.linkage_matrix.tolist(),
-                'cluster_assignments': self.cluster_assignments.tolist(),
-                'n_clusters': n_clusters,
-                'linkage_method': linkage_method
+                "linkage_matrix": self.linkage_matrix.tolist(),
+                "cluster_assignments": self.cluster_assignments.tolist(),
+                "n_clusters": n_clusters,
+                "linkage_method": linkage_method,
             }
 
             return OptimizationResult(
                 weights=dict(zip(self.returns.columns, final_weights, strict=True)),
                 performance=performance,
                 method_specific=method_specific,
-                success=True
+                success=True,
             )
 
         except Exception as e:
             return OptimizationResult(
                 weights=dict.fromkeys(self.returns.columns, 0.0),
                 performance={},
-                method_specific={'error': str(e)},
+                method_specific={"error": str(e)},
                 success=False,
-                message=f"Optimization failed: {e!s}"
+                message=f"Optimization failed: {e!s}",
             )
 
     def _calculate_linkage(self, method: str) -> np.ndarray:
@@ -126,7 +130,7 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
 
     def _assign_to_clusters(self, n_clusters: int) -> np.ndarray:
         """Assign assets to clusters based on linkage matrix."""
-        return fcluster(self.linkage_matrix, n_clusters, criterion='maxclust')
+        return fcluster(self.linkage_matrix, n_clusters, criterion="maxclust")
 
     def _calculate_cluster_weights(self) -> dict[int, float]:
         """Calculate cross-cluster weights via inverse-risk allocation.
@@ -135,7 +139,9 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
         the equal-weighted portfolio inside the cluster), normalized to sum to 1.
         """
         if self.cluster_assignments is None:
-            raise RuntimeError("cluster_assignments not computed — call optimize() first")
+            raise RuntimeError(
+                "cluster_assignments not computed — call optimize() first"
+            )
 
         # Get indices for each cluster
         cluster_indices: dict[int, list[int]] = {}
@@ -173,7 +179,9 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
         intra_weights = {}
 
         if self.cluster_assignments is None:
-            raise RuntimeError("cluster_assignments not computed — call optimize() first")
+            raise RuntimeError(
+                "cluster_assignments not computed — call optimize() first"
+            )
 
         # Get indices for each cluster
         cluster_indices = {}
@@ -209,10 +217,10 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
             rc = weights * mctr
 
             # Calculate diversification ratio
-            return np.sum((rc - rc.mean())**2)
+            return np.sum((rc - rc.mean()) ** 2)
 
         # Constraints: fully invested portfolio
-        constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+        constraints = [{"type": "eq", "fun": lambda x: np.sum(x) - 1}]
 
         # Bounds: weights between 0 and 1
         bounds = [(0, 1) for _ in range(n_assets)]
@@ -221,16 +229,24 @@ class HierarchicalRiskParityOptimizer(BaseOptimizer):
         initial_weights = np.ones(n_assets) / n_assets
 
         # Optimize
-        result = minimize(objective, initial_weights, method='SLSQP',
-                         bounds=bounds, constraints=constraints)
+        result = minimize(
+            objective,
+            initial_weights,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+        )
 
         if not result.success:
             raise RuntimeError(f"ERC optimization failed: {result.message}")
 
         return dict(zip(indices, result.x, strict=True))
 
-    def _combine_weights(self, cluster_weights: dict[int, float],
-                        intra_cluster_weights: dict[int, dict[int, float]]) -> np.ndarray:
+    def _combine_weights(
+        self,
+        cluster_weights: dict[int, float],
+        intra_cluster_weights: dict[int, dict[int, float]],
+    ) -> np.ndarray:
         """Combine cluster and intra-cluster weights to get final portfolio weights.
 
         final_weight[asset] = cross-cluster weight x intra-cluster (ERC) weight.
